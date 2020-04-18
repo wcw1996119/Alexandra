@@ -1,0 +1,91 @@
+# -*-coding:utf-8 -*-
+# @Time:2020/4/189:39
+# @Author:Alexandra
+# @File:1.2homework.py
+
+import re
+
+
+def is_id():
+    if len(id) != 18 or not re.match(r"^\d{17}(\d|X|x)$", id):
+        return False
+    return True
+
+
+def is_temp():
+    try:
+        temp_float = float(temp)
+    except ValueError or temp_float < 35.0 or temp_float > 42.0:
+        return False
+    return True
+
+
+class Person:
+    def __init__(self, name, id, temp):
+        self.name = name
+        self.id = id
+        self.temp = temp
+
+    def is_fever(self):
+        if float(self.temp) > 37.3:
+            return True
+        elif float(self.temp) <= 37.3:
+            return False
+
+    def is_wuhan(self):
+        if self.id[0:4] == "4201":
+            return True
+        elif self.id[0:4] != "4201":
+            return False
+
+    def if_geli(self):
+        if self.is_fever() and not self.is_wuhan():
+            return True
+        if self.is_wuhan() and not self.is_fever():
+            return True
+        else:
+            return False
+
+    def if_shangbao(self):
+        if self.is_fever() and self.is_wuhan():
+            return True
+        else:
+            return False
+
+
+if __name__ == '__main__':
+    geli = dict()
+    shangbao = dict()
+
+    while True:
+        name = input("请输入您的姓名/代号：")
+        id = input("请输入您的身份证号：")
+        if not is_id():
+            print(name + ",您输入的身份证号错误")
+            continue
+        temp = input("请输入您现在的体温：")
+        if not is_temp():
+            print(name + ",您输入的体温错误")
+            continue
+        person = Person(name, id, temp)
+
+        if person.if_geli():
+            geli[person.id] = person.temp
+            print(person.name + "请您居家隔离")
+        elif person.if_shangbao():
+            shangbao[person.id] = person.temp
+            print(person.name + "请您及时就诊")
+        elif not person.if_geli() and not person.if_shangbao():
+            print("您很健康")
+
+        continue_or_not = input("终止程序请输入q：")
+        if continue_or_not == "q":
+            break
+
+    print("上报信息：%s" % str(shangbao))
+    print("隔离信息：%s" % str(geli))
+
+    file = open("report.txt","w+")
+    file.write("需要上报的人员有"+str(shangbao))
+    file.write("需要隔离的人员有"+str(geli))
+    file.close()
