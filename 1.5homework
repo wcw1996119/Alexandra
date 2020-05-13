@@ -1,0 +1,116 @@
+# -*-coding:utf-8 -*-
+# @Time:2020/5/1316:59
+# @Author:Alexandra
+# @File:1.5homework.py
+
+import sys
+import re
+
+
+# 创建类：个人
+class Person:
+    # 初始化：身份证id，体温temp
+    def __init__(self):
+        self.id = None
+        self.temp = None
+
+    def is_wuhan(self):
+        return self.id[0:4] == "4201"
+
+    def is_fever(self):
+        return self.temp > 37.3
+
+    # 个人判断结果：列入观察区is_observation，列入隔离区is_isolation
+    def is_observation(self):
+        return (self.is_fever() and not self.is_wuhan()) or (self.is_wuhan() and not self.is_fever())
+
+    def is_isolation(self):
+        return self.is_fever() and self.is_wuhan()
+
+    def is_secure(self):
+        return not self.is_fever() and not self.is_wuhan()
+
+
+
+# 创建类：处理器
+class Processor:
+    # 初始化：创建观察区字典observation_dict，创建隔离区字典isolation_dict
+    def __init__(self):
+        self.person = Person()
+        self.observation_dict = {}
+        self.isolation_dict = {}
+
+    # 检验输入合法性
+    def _check(self):
+        while True:
+            self._continue_or_quit()
+            self.input_id = input("请输入您的身份证号：")
+            self.input_temp = input("请输入您的体温：")
+            if len(self.input_id) == 18 and re.match(r"^\d{17}(\d|X|x)$", self.input_id) and 35.0 < float(self.input_temp) < 41.0:
+                self.person.id, self.person.temp = self.input_id, float(self.input_temp)
+                self._classified()
+            else:
+                print("输入错误")
+                continue
+
+    # 是否退出
+    def _continue_or_quit(self):
+        while True:
+            if input("退出请按q,任意键继续") == "q":
+                self._exit()
+            break
+
+    def _exit(self):
+        self._write_record()
+        sys.exit(0)
+
+    def _write_record(self):
+        # 写入观察区文件
+        file1 = open("observation_people_list.txt", mode="a", encoding="utf-8")
+        for key in self.observation_dict.keys():
+            file1.write(key + " " + str(self.observation_dict[key]) + "℃\n")
+        file1.close()
+
+        # 写入隔离区文件
+        file2 = open("isolation_people_list.txt", mode="a", encoding="utf-8")
+        for key in self.isolation_dict.keys():
+            file2.write(key + " " + str(self.isolation_dict[key]) + "℃\n")
+        file2.close()
+
+        # 按危险性排序（武汉体温-低，非武汉体温高-低）
+        file3 = open("danger_rank_list.txt", mode="a", encoding="utf-8")
+        nums_wuhan = self.item_sort(list(self.isolation_dict.items()))
+        nums_nonwuhan = self.item_sort(list(self.observation_dict.items()))
+        file3.write(str(nums_wuhan)+"\n"+str(nums_nonwuhan))
+
+    @staticmethod
+    def item_sort(nums):
+        for sort_inx in range(1, len(nums)):
+            unsort_inx = sort_inx
+            while nums[unsort_inx - 1][1] < nums[unsort_inx][1]:
+                nums[unsort_inx - 1], nums[unsort_inx] = nums[unsort_inx], nums[unsort_inx - 1]
+                unsort_inx = unsort_inx - 1
+        return nums
+
+    # 人员归类
+    def _classified(self):
+        if self.person.is_observation():
+            self._record_observation()
+        elif self.person.is_isolation():
+            self._record_isolation()
+        elif self.person.is_secure():
+            print("健康")
+
+    def _record_observation(self):
+        self.observation_dict[self.person.id] = self.person.temp
+        print("已列入观察区")
+
+    def _record_isolation(self):
+        self.isolation_dict[self.person.id] = self.person.temp
+        print("已列入隔离区")
+
+
+if __name__ == '__main__':
+    processor = Processor()
+    while True:
+        processor._check()
