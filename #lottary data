@@ -1,0 +1,154 @@
+# -*-coding:utf-8 -*-
+# @Time:2020/6/523:13
+# @Author:Alexandra
+# @File:homework2.1.py
+
+# 作业1 股票数据清洗
+import numpy as np
+import pandas as pd
+
+"""题目一"""
+# 1. 从fundemantals.csv开始！
+# 请用数据回答以下问题：
+#
+#     S&P500股票在2015年net income的均值是多少？最大值比最小值多多少？（每问10分，共计20分）
+#     S&P500股票在2016年的固定资产（fixed assets）占总资产(total assets)比例的均值是多少？固定资产占总资产比例最小的股票的代码（ticker symbol）是什么？（每问10分，共计20分）
+
+# 读取文件 fundemantals.csv
+df = pd.read_csv("fundamentals.csv", encoding='gb2312')
+
+# 第一问：读取2015年net income数据并做统计
+data_2015 = df[(df['For Year'] == 2015)]  # 筛选符合条件的数据
+mean_2015 = data_2015.loc[:, 'Net Income'].mean()
+gap_2015 = data_2015.loc[:, 'Net Income'].max() - df.loc[:, 'Net Income'].min()
+print(mean_2015)  # 2015年net income的均值
+print(gap_2015)  # 最大值-最小值
+
+# 第二问：读取2016年固定资产、总资产数据并作分析
+data_2016 = df[(df['For Year'] == 2016)]
+column_data = np.array(data_2016.reindex(columns=['Fixed Assets', 'Total Assets']))  # 读取用于分析的两列数据并转化为数组
+proportions = column_data[:, 0] / column_data[:, 1]
+print(proportions.mean())  # 2016年的固定资产（fixed assets）占总资产(total assets)比例的均值
+min_index = np.argmin(proportions)
+min_proportion_symbol = np.array(data_2016.reindex(columns=['Ticker Symbol']))[min_index]
+print(min_proportion_symbol)  # 固定资产占总资产比例最小的股票的代码（ticker symbol）
+
+"""题目二"""
+# 2. 加入securities.csv~
+#
+# securities.csv包含了这些股票的基本信息
+#
+#     请列举出各个sector中的加入时间最早的股票名称（10分）
+#     请列举出每一个州中加入时间最晚的股票名称（10分）
+
+# 读取文件 securities.csv
+df = pd.read_csv("securities.csv", encoding='gb2312')
+df = df.dropna()  # 丢掉缺失的值
+
+# 按时间作为索引排序
+df = df.sort_values(by='Date first added', ascending=True)
+df = df.reset_index()
+
+# 迭代遍历分组
+# 第一问：分组后取头部数据
+print("各个sector中的加入时间最早的股票名称")
+grouped = df.groupby("GICS Sector")
+for name, group in grouped:
+    print("______", name)
+    print("加入时间最早的股票名称:" + str(group["Ticker Symbol"].head(1)))
+
+# 第二问：分组后取尾部数据
+print("每一个州中加入时间最晚的股票名称")
+grouped = df.groupby("Address of Headquarters")
+for name, group in grouped:
+    print("______", name)
+    print("加入时间最晚的股票名称:" + str(group["Ticker Symbol"].tail(1)))
+
+"""题目三"""
+# 3. merge!
+#
+# 现在你需要同时处理来自两个表中的信息了
+#
+#     请思考，合并两个表的信息的时候，我们应该用什么样的准则对齐它们（10分）
+#     请列举每个sector在2013-2016年累计Research&Development的总投入（10分）
+#     请列举出每个sector中，在2013-2016年累计Research&development投入最大的3家公司的名称以及投入的数值（20分）
+
+# 第一问：连接数据
+left = pd.read_csv("fundamentals.csv", encoding='gb2312')
+right = pd.read_csv("securities.csv", encoding='gb2312')
+rs = pd.merge(left, right, on="Ticker Symbol", how="inner")  # 有一项共同标签，考虑到后文仅统计有sector的数据，所以选择内连接方式
+
+# 第二问：列举每个sector在2013-2016年累计Research&Development的总投入
+
+# 筛选出2013-2016的数据
+data_13_16 = rs[(rs['For Year'].isin([2015, 2016, 2017]))]
+
+# 分组并迭代
+grouped = data_13_16.groupby("GICS Sector")
+for name, group in grouped:
+    print("______", name)
+    print("累计r&d总投入:" + str(group["Research and Development"].sum()))
+
+# 第三问：每个sector中，在2013-2016年累计Research&development投入最大的3家公司的名称以及投入的数值
+
+# 分析中需要用到的属性有sector,"security","Research&Development"三个，创建字典用于存储数据
+sum_list = {}
+
+# 按前两个属性分组，迭代并存储进字典
+grouped = data_13_16.groupby(["GICS Sector", "Security"])
+for name, group in grouped:
+    sum_list[str(name)] = group["Research and Development"].sum()
+
+# 对字典按value排序
+value_sorted = sorted(sum_list.items(), key=lambda x: x[1], reverse=True)
+
+# 转化为Dataframe
+value_sorted_pd = pd.DataFrame(value_sorted, columns=['Sector and Company', 'r&d total'])
+print(value_sorted_pd)
+
+# 分列
+df = value_sorted_pd['Sector and Company'].str.split(',', expand=True)
+value_sorted_pd['Sector'] = df[0]
+value_sorted_pd['Company'] = df[1]
+print(value_sorted_pd)
+
+grouped = value_sorted_pd.groupby("Sector")
+for name, group in grouped:
+    print("______", name)
+    company = pd.DataFrame(group['Company'])
+    rd_total = pd.DataFrame(group['r&d total'])
+    com_investment = company.join(rd_total)
+    print(com_investment.head(3))  # 投入最大的3家公司的名称以及投入的数值
+
+"""题目四"""
+# 4. 现在让我们来看看更加复杂的数据
+#
+# 请导入price.csv，然后结合你的聪明才智回答以下问题（附加题，40分）
+#
+# 假设你是某基金公司的老板，现在对于每只股票，你都专门安排了一位负责它的交易员。公司规定每一位交易员手中的资金要么全部买入要么全部卖出（空仓，转化为现金）。假设2016年每一位交易员手中都有10000美元，假设他们都能够看到2016年全年的数据，假设他们都能抓住每一次机会，那么请问2016年底时，赚钱最多的股票是哪一只，赚了多少钱？
+
+# 读取并筛选出2016年的数据
+from datetime import datetime
+from datetime import timedelta
+
+df = pd.read_csv("prices.csv", encoding='gb2312')
+df['date'] = pd.to_datetime(df['date'])
+df = df[(df['date'].dt.year == 2016)]
+print(df)
+
+# 对于每只股票（每位交易员）（指定symbol）
+# A策略为当日买入卖出，买入价格为买入日open·x <10000, 卖出价格为卖出日high·x
+# 买入日开市价格为date1和open的交叉数据，卖出日卖出价格为date2和high的交叉数据
+
+# 构造字典
+profit_dict = {}
+
+# 计算每日盈利
+df['profit'] = df['high'] - df['low']
+
+# 按股票名称分组遍历
+grouped = df.groupby('symbol')
+for name, group in grouped:
+    profit_dict[name] = df['profit'].sum()
+value_max = max(profit_dict.items(), key=lambda x: x[1])
+print(value_max)  # 最佳股票与盈利
