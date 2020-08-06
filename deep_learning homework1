@@ -1,0 +1,167 @@
+# -*-coding:utf-8 -*-
+# @Time:2020/8/418:55
+# @Author:Alexandra
+# @File:homework.py
+"""
+题目：使用Keras或PyTorch搭建全连接神经网络，完成在MNIST and CIFAR-10上的训练和评测
+•	优化网络结构和超参，尽量提高模型效果
+•	目前我们还没有讲到在Pytorch中模型的验证方法，在后续的课程中我会给大家慢慢介绍。但是聪明的你们可以利用目前所学，自己建立一种验证机制吗
+"""
+"""练习1：Keras完成MNIST训练和评测"""
+# 导入库
+import keras
+from keras.utils import to_categorical
+from keras.layers import Dense
+from keras.models import Sequential
+from keras.callbacks import EarlyStopping
+
+# 调用数据
+"""
+MINIST数据集共包括4个部分：
+Training set images: train-images-idx3-ubyte.gz (9.9 MB, 解压后 47 MB, 包含 60,000 个样本)
+Training set labels: train-labels-idx1-ubyte.gz (29 KB, 解压后 60 KB, 包含 60,000 个标签)
+Test set images: t10k-images-idx3-ubyte.gz (1.6 MB, 解压后 7.8 MB, 包含 10,000 个样本)
+Test set labels: t10k-labels-idx1-ubyte.gz (5KB, 解压后 10 KB, 包含 10,000 个标签)
+"""
+mnist = keras.datasets.mnist
+(X_train, y_train), (X_test, y_test) = mnist.load_data()  # 下载数据，分别赋值到训练集和测试集中
+print(X_train.shape)  # (60000,28,28)
+print(X_test.shape)  # (10000,28,28)
+print(y_train.shape)  # (60000,)
+print(y_test.shape)  # (10000,)
+
+
+# 数据预处理
+X_train = X_train.reshape(X_train.shape[0], X_train.shape[1]*X_train.shape[2]).astype('float32')  # 三维转二维，将数据reshape成[samples][num_pixels]
+X_test = X_test.reshape(X_test.shape[0],X_test.shape[1]*X_test.shape[2]).astype('float32')
+X_train = X_train / 255  # 给定的像素的灰度值在0-255，为了使模型的训练效果更好，通常将数值归一化映射到0-1
+X_test = X_test / 255
+y_train = to_categorical(y_train)  # 为标签做OneHot编码
+y_test = to_categorical(y_test)
+print(y_test.shape)  # (10000,10)
+num_classes = y_test.shape[1]  # 类型数
+
+# 创建模型
+model = Sequential()  # 创建实例
+model.add(Dense(784, activation='relu', input_shape=(X_train.shape[1],), kernel_initializer='normal'))  # 添加隐层,初始化方式为高斯分布
+model.add(Dense(10, activation='softmax',kernel_initializer='normal'))
+
+# 定义损失函数和优化器
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.summary()
+
+# 设置早停
+early_stopping_monitor = EarlyStopping(monitor="val_loss", min_delta=0, patience=3, verbose=1, mode="auto")  # 疑似版本问题，否则可设置restore_best_weights
+
+# 训练模型
+history = model.fit(X_train, y_train, validation_data=(X_test,y_test),batch_size=200, verbose=2, callbacks=[early_stopping_monitor],epochs=10)
+print(history)
+scores = model.evaluate(X_test,y_test,verbose=0) # model.evaluate 返回计算误差和准确率
+print(scores)
+
+
+
+
+
+"""练习2：Pytorch完成CIFAR-10训练和评测"""
+# 导入库
+import torch
+import torch.nn as nn
+import torchvision
+import torch.utils.data
+import torchvision.transforms as transforms
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.autograd import Variable
+import datetime
+
+# 调用数据集
+transform = transforms.Compose([transforms.RandomHorizontalFlip(),
+                                transforms.RandomGrayscale(),
+                                transforms.ToTensor(),
+                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])  # 定义训练集transform规则，
+# 前两句通过随机翻转图片，随机调整图片的亮度做数据增强；后两句是转换格式并标准化
+transform1 = transforms.Compose(
+    [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])  # 定义测试集transform规则
+
+trainset = torchvision.datasets.CIFAR10(root='/Users/Benene/Desktop/CIFAR10', train=True, download=True,
+                                        transform=transform)  # 定义数据集调用规则
+testset = torchvision.datasets.CIFAR10(root='/Users/Benene/Desktop/CIFAR10', train=False, download=True,
+                                       transform=transform1)
+
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=True, num_workers=0)  # 下载数据
+testloader = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False, num_workers=0)
+
+y_loss=[]
+y_time=[]
+
+# 创建网络
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.l0 = nn.Linear(3072, 2048)
+        self.l1 = nn.Linear(2048, 1024)
+        self.l2 = nn.Linear(1024, 512)
+        self.l3 = nn.Linear(512, 256)
+        self.l4 = nn.Linear(256, 128)
+        self.l5 = nn.Linear(128, 10)
+
+    def forward(self, x):
+        x = x.view(-1, 3072)
+        x = F.relu(self.l0(x))
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(x))
+        x = F.relu(self.l3(x))
+        x = F.relu(self.l4(x))
+        return F.log_softmax(self.l5(x), dim=1)  # 加快运算速度，提高数据稳定性
+
+
+# 实例化网络
+net = Net()
+
+# 定义损失函数和优化器
+criterion = nn.CrossEntropyLoss()  # 损失函数为交叉熵
+optimizer = optim.Adam(net.parameters(), lr=3e-4)  # 优化范围为全网络参数
+
+# 训练网络
+def train(epoch):
+    # 每次输入barch_idx个数据
+    for batch_idx, (data, target) in enumerate(trainloader):
+        data, target = Variable(data), Variable(target)  # Variable可以看作是对Tensor对象周围的一个薄包装，也包含了和张量相关的梯度，以及对创建它的函数的引用。 此引用允许对创建数据的整个操作链进行回溯。
+        optimizer.zero_grad()  # 重置优化器
+        output = net(data)
+        loss = criterion(output, target)
+        loss.backward()  # 梯度下降
+        optimizer.step()  # 参数更新
+        if batch_idx % 391 == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(trainloader.dataset),
+                100. * batch_idx / len(trainloader), loss.item()))  # epoch,取出训练数据的数量及占比，loss
+            y_loss.append(loss.item())
+
+# 测试
+def test():
+    test_loss = 0
+    correct = 0
+    # 测试集
+    for data, target in testloader:
+        data, target = Variable(data, volatile=True), Variable(target)
+        output = net(data)
+        # sum up batch loss
+        test_loss += criterion(output, target).item()
+        # get the index of the max
+        pred = output.data.max(1, keepdim=True)[1]
+        correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+
+    test_loss /= len(testloader.dataset)
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        test_loss, correct, len(testloader.dataset),
+        100. * correct / len(testloader.dataset)))  # loss,accuracy
+
+for epoch in range(1,10):
+    starttime = datetime.datetime.now()
+    train(epoch)
+    endtime = datetime.datetime.now()
+    y_time.append(endtime - starttime)
+with torch.no_grad():
+        test()
