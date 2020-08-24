@@ -1,0 +1,354 @@
+"""
+作业：
+1.运行课堂代码，对比两种迁移学习方法在本数据集中的效果，可以尝试增加epoch；
+2.尝试更多的预训练网络和不同的正则化方法，可以finetuning一层或多层，在cifar10的测试集中尽可能获得高的准确率
+选做：
+1.实现L1正则化，并与L2正则化对比效果，框架不限。
+"""
+
+"""
+1.对比两种迁移学习方法在本数据集中的效果
+"""
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim import lr_scheduler
+import numpy as np
+import torchvision
+from torchvision import datasets, models, transforms
+from torch.autograd import Variable
+import matplotlib.pyplot as plt
+import time
+import os
+import copy
+
+# 制定数据转换规则。RandomResizedCrop随机裁剪并缩放为指定的大小；RandomHorizontalFlip水平反转；Resize重置图片分辨率至h*w；CenterCrop中心裁剪
+data_transforms = {
+    'train': transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) ]),
+    'val': transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]),}
+
+# 构建数据集，官方写好的torchvision.datasets.ImageFolder接口实现数据导入
+data_dir = 'F:/资料/6000大洋/正课/深度学习/hymenoptera_data'
+image_datasets = {x: datasets.ImageFolder(os.path.join(data_dir, x),data_transforms[x]) for x in ['train', 'val']}
+
+# 加载数据集
+dataloaders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=4,shuffle=True, num_workers=0) for x in ['train', 'val']}  # num_workers解决pytorch多线程问题
+dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}  # 数据集大小
+class_names = image_datasets['train'].classes  # 类别的名称
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+# 查看数据集
+print(image_datasets)
+print(dataset_sizes)
+print(class_names)
+
+# 定义函数（带验证集）
+def train_model(model, criterion, optimizer, scheduler, num_epochs=25):
+    since = time.time()
+    best_model_wts = copy.deepcopy(model.state_dict())  # 原始模型参数
+    best_acc = 0.0
+
+    for epoch in range(num_epochs):  # 逐个开启epoch
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        for phase in ['train', 'val']:  # 每个epoch里都要先训练再验证，为了避免过拟合
+            if phase == 'train':
+                scheduler.step()
+                model.train()
+            else:
+                model.eval()
+            running_loss = 0.0
+            running_corrects = 0
+
+            for inputs, labels in dataloaders[phase]:  # 遍历dataloader
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+                optimizer.zero_grad()  # 初始化优化器
+
+                # 前向传播，返向传播
+                with torch.set_grad_enabled(phase == 'train'):  # 是训练模式就计算梯度，不是训练模式就不计算梯度
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)  # 返回的是两个值，一个是每一行最大值的tensor组，另一个是最大值所在的位置
+                    loss = criterion(outputs, labels)
+                    if phase == 'train':  # 训练状态下进行BP并更新参数
+                        loss.backward()
+                        optimizer.step()
+
+
+
+                running_loss += loss.item() * inputs.size(0)  # loss累计（按batch)
+                running_corrects += torch.sum(preds == labels.data)  # 正确数累计
+
+            epoch_loss = running_loss / dataset_sizes[phase]  # 平均loss
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]  # 平均准确率
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+
+            # 保存模型
+            if phase == 'val' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
+
+    # 所有epoch运行结束后，打印结果
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+
+    model.load_state_dict(best_model_wts)  # 加载当前最好的一组参数，返回模型
+    return model
+
+# 方法一：替换最后一层
+model_ft = models.resnet18(pretrained=True)  # 加载预训练模型，换成需要的网络名称即可
+num_ftrs = model_ft.fc.in_features  # 取到原始的fc层输入
+model_ft.fc = nn.Linear(num_ftrs, 2)  # 重构全连接层，这里做蚂蚁蜜蜂的分类是二分类
+model_ft = model_ft.to(device)  # 定义设备
+criterion = nn.CrossEntropyLoss()  # 定义loss
+optimizer_ft = optim.SGD(model_ft.parameters(), lr=0.001, momentum=0.9)  # 替换所有参数，并没有冻结前面的参数
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_ft, step_size=7, gamma=0.1)  # 定义梯度衰减
+print(model_ft)
+model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler,num_epochs=10)
+
+# 方法二：冻结除最终完全连接层之外的所有网络的权重
+model_conv = torchvision.models.resnet18(pretrained=True)
+for param in model_conv.parameters():
+    param.requires_grad = False
+num_ftrs = model_conv.fc.in_features  # 获取全连接层输入特征数
+model_conv.fc = nn.Linear(num_ftrs, 2)  # 重置全连接层
+model_conv = model_conv.to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer_con = optim.SGD(model_conv.fc.parameters(), lr=0.001, momentum=0.9)
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_con, step_size=7, gamma=0.1)
+model_conv = train_model(model_conv,criterion,optimizer_con,exp_lr_scheduler,num_epochs=10)
+
+def train(model, criterion, optimizer, scheduler, num_epochs=25):
+    since = time.time()
+    best_model_wts = copy.deepcopy(model.state_dict())  # 原始模型参数
+    best_acc = 0.0
+
+    for epoch in range(num_epochs):  # 逐个开启epoch
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        for phase in ['train', 'val']:  # 每个epoch里都要先训练再验证，为了避免过拟合
+            if phase == 'train':
+                scheduler.step()
+                model.train()
+            else:
+                model.eval()
+            running_loss = 0.0
+            running_corrects = 0
+
+            for batch_idx, (inputs, labels) in enumerate(dataloaders[phase]):
+                inputs, labels = Variable(inputs), Variable(labels)
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+                optimizer.zero_grad()  # 初始化优化器
+
+                # 前向传播，返向传播
+                with torch.set_grad_enabled(phase == 'train'):  # 是训练模式就计算梯度，不是训练模式就不计算梯度
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)  # 返回的是两个值，一个是每一行最大值的tensor组，另一个是最大值所在的位置
+                    loss = criterion(outputs,labels)
+
+                    if phase == 'train':  # 训练状态下进行BP并更新参数
+                        loss.backward()
+                        optimizer.step()
+
+                running_loss += loss.item() * inputs.size(0)  # loss累计（按batch)
+                running_corrects += torch.sum(preds == labels.data)  # 正确数累计
+
+            epoch_loss = running_loss / dataset_sizes[phase]  # 平均loss
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]  # 平均准确率
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+
+            # 保存模型
+            if phase == 'val' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
+
+    # 所有epoch运行结束后，打印结果
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+
+    model.load_state_dict(best_model_wts)  # 加载当前最好的一组参数，返回模型
+    return model
+
+
+# 改变预训练网络为VGG11，采用L2正则化，finetune全连接层
+# 制定数据转换规则。
+data_transforms = {
+    'train': transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) ]),
+    'test': transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]),
+}
+
+# 划分验证集
+indices = np.arange(50000)
+np.random.shuffle(indices)
+
+# 加载数据集
+trainset = torchvision.datasets.CIFAR10(root='/Users/Benene/Desktop/CIFAR10', train=True, download=True,
+                                        transform=data_transforms['train'])
+testset = torchvision.datasets.CIFAR10(root='/Users/Benene/Desktop/CIFAR10', train=False, download=True,
+                                       transform=data_transforms['test'])
+
+dataloaders = {}
+dataloaders['train'] = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=False,
+                                          sampler=torch.utils.data.SubsetRandomSampler(indices[:45000]),num_workers=0)
+dataloaders['val'] = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=False,
+                                         sampler=torch.utils.data.SubsetRandomSampler(indices[45000:50000]), num_workers=0)
+dataloaders['test'] = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False,num_workers=0)
+
+dataset_sizes = {}
+dataset_sizes['train'] = 45000
+dataset_sizes['val'] = 5000
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+# 加载预训练模型，冻结前层
+model_conv = torchvision.models.vgg11(pretrained=True)
+for param in model_conv.parameters():
+    param.requires_grad = False
+
+# 重置全连接层
+model_conv.classifier = torch.nn.Sequential(
+    torch.nn.Linear(512*7*7, 1024),
+    torch.nn.ReLU(),
+    torch.nn.Dropout(p=0.5),
+    torch.nn.Linear(1024, 10))
+
+# L2正则
+model_conv = model_conv.to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer_con = optim.SGD(model_conv.classifier.parameters(), lr=0.001, momentum=0.9,weight_decay=0.001) 
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_con, step_size=7, gamma=0.1)
+model_conv = train(model_conv,criterion,optimizer_con,exp_lr_scheduler,num_epochs=5)
+
+"""
+1.实现L1正则化，并与L2正则化对比效果，框架不限。
+"""
+def train(model, criterion, optimizer, scheduler, num_epochs=25):
+    since = time.time()
+    best_model_wts = copy.deepcopy(model.state_dict())  # 原始模型参数
+    best_acc = 0.0
+
+    for epoch in range(num_epochs):  # 逐个开启epoch
+        print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        print('-' * 10)
+
+        for phase in ['train', 'val']:  # 每个epoch里都要先训练再验证，为了避免过拟合
+            if phase == 'train':
+                scheduler.step()
+                model.train()
+            else:
+                model.eval()
+            running_loss = 0.0
+            running_corrects = 0
+
+            for batch_idx, (inputs, labels) in enumerate(dataloaders[phase]):
+                inputs, labels = Variable(inputs), Variable(labels)
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+                optimizer.zero_grad()  # 初始化优化器
+
+                # 前向传播，返向传播
+                with torch.set_grad_enabled(phase == 'train'):  # 是训练模式就计算梯度，不是训练模式就不计算梯度
+                    outputs = model(inputs)
+                    _, preds = torch.max(outputs, 1)  # 返回的是两个值，一个是每一行最大值的tensor组，另一个是最大值所在的位置
+                    regularization_loss = 0
+                    for param in model_conv.parameters():
+                       regularization_loss += torch.sum(torch.abs(param))
+                    loss = criterion(outputs, labels)+ λ * regularization_loss
+                    if phase == 'train':  # 训练状态下进行BP并更新参数
+                        loss.backward()
+                        optimizer.step()
+
+                running_loss += loss.item() * inputs.size(0)  # loss累计（按batch)
+                running_corrects += torch.sum(preds == labels.data)  # 正确数累计
+
+            epoch_loss = running_loss / dataset_sizes[phase]  # 平均loss
+            epoch_acc = running_corrects.double() / dataset_sizes[phase]  # 平均准确率
+            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+
+            # 保存模型
+            if phase == 'val' and epoch_acc > best_acc:
+                best_acc = epoch_acc
+                best_model_wts = copy.deepcopy(model.state_dict())
+
+    # 所有epoch运行结束后，打印结果
+    time_elapsed = time.time() - since
+    print('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+    print('Best val Acc: {:4f}'.format(best_acc))
+
+    model.load_state_dict(best_model_wts)  # 加载当前最好的一组参数，返回模型
+    return model
+
+
+# 改变预训练网络为VGG11，采用L2正则化，finetune全连接层
+# 制定数据转换规则。
+data_transforms = {
+    'train': transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]) ]),
+    'test': transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]),
+}
+
+# 划分验证集
+indices = np.arange(50000)
+np.random.shuffle(indices)
+
+# 加载数据集
+trainset = torchvision.datasets.CIFAR10(root='/Users/Benene/Desktop/CIFAR10', train=True, download=True,
+                                        transform=data_transforms['train'])
+testset = torchvision.datasets.CIFAR10(root='/Users/Benene/Desktop/CIFAR10', train=False, download=True,
+                                       transform=data_transforms['test'])
+
+dataloaders = {}
+dataloaders['train'] = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=False,
+                                          sampler=torch.utils.data.SubsetRandomSampler(indices[:45000]),num_workers=0)
+dataloaders['val'] = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=False,
+                                         sampler=torch.utils.data.SubsetRandomSampler(indices[45000:50000]), num_workers=0)
+dataloaders['test'] = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False,num_workers=0)
+
+dataset_sizes = {}
+dataset_sizes['train'] = 45000
+dataset_sizes['val'] = 5000
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+# 加载预训练模型，冻结前层
+model_conv = torchvision.models.vgg11(pretrained=True)
+for param in model_conv.parameters():
+    param.requires_grad = False
+
+# 重置全连接层
+model_conv.classifier = torch.nn.Sequential(
+    torch.nn.Linear(512*7*7, 1024),
+    torch.nn.ReLU(),
+    torch.nn.Dropout(p=0.5),
+    torch.nn.Linear(1024, 10))
+
+
+# L1正则
+model_conv = model_conv.to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer_con = optim.SGD(model_conv.classifier.parameters(), lr=0.001, momentum=0.9) 
+exp_lr_scheduler = lr_scheduler.StepLR(optimizer_con, step_size=7, gamma=0.1)
+λ = 10
+model_conv = train(model_conv,criterion,optimizer_con,exp_lr_scheduler,num_epochs=5)
